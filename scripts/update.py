@@ -258,43 +258,28 @@ def generate_html():
     bt300 = run_backtest(300)
     bt500 = run_backtest(500)
     
-    # 下期预测
+    # 下期预测 — 使用与回测一致的约束逻辑
     lB,lS,lG = raw_data[-1][2]
     nB,mB = kill_bai(lB,lS,lG)
     nS,mS = kill_shi(lB,lS,lG)
     nG,mG = kill_ge(lB,lS,lG)
-    # 计算上期杀码用于约束
-    if len(raw_data) >= 2:
-        pB2,pS2,pG2 = raw_data[-2][2]
-        last_pkB, _ = kill_bai(pB2,pS2,pG2)
-        last_pkS, _ = kill_shi(pB2,pS2,pG2)
-        last_pkG, _ = kill_ge(pB2,pS2,pG2)
-        # 简化: 用v5的上期杀码估算; 实际回测中用的是累计值
-        last_pkB = lB  # fallback
-        last_pkS = lS
-        last_pkG = lG
+    
+    # 推算上期杀码用于约束: 用倒数第二期数据运行算法
+    if len(raw_data) >= 3:
+        pB2,pS2,pG2 = raw_data[-3][2]
+        ppB,ppS,ppG = raw_data[-2][2]
+        pkB,_ = kill_bai(pB2,pS2,pG2)
+        pkS,_ = kill_shi(pB2,pS2,pG2)
+        pkG,_ = kill_ge(pB2,pS2,pG2)
+        last_pkB = smart_fallback(pkB, None, pB2,pS2,pG2, 0)
+        last_pkS = smart_fallback(pkS, None, pB2,pS2,pG2, 1)
+        last_pkG = smart_fallback(pkG, None, pB2,pS2,pG2, 2)
     else:
         last_pkB = last_pkS = last_pkG = None
     
-    # 运行一次迷你回测来获取真正的上期杀码
-    test_nB, test_nS, test_nG = nB, nS, nG
-    for _ in range(2):  # 避免无限循环
-        if last_pkB is not None and nB == last_pkB:
-            tt = lB+lS+lG
-            for a in [(lB*lS)%10,(lB*lB+lS+lG*lG)%10,(max(lB,lS,lG)-min(lB,lS,lG)+1)%10,(lB+lG-lS)%10,(lB+lG)%10,(tt+6)%10]:
-                if a%10 != last_pkB: nB=a%10; break
-            else: nB=(nB+1)%10
-        if last_pkS is not None and nS == last_pkS:
-            tt = lB+lS+lG
-            for a in [(lG*lG+lB)%10,(tt+1)%10,max(lB,lS,lG)-min(lB,lS,lG),lB*lG%10]:
-                if a%10 != last_pkS: nS=a%10; break
-            else: nS=(nS+1)%10
-        if last_pkG is not None and nG == last_pkG:
-            tt = lB+lS+lG
-            for a in [(tt+1)%10,(tt+6)%10,(lB+lG)%10,max(lB,lS,lG)]:
-                if a%10 != last_pkG: nG=a%10; break
-            else: nG=(nG+1)%10
-        break
+    nB = smart_fallback(nB, last_pkB, lB,lS,lG, 0)
+    nS = smart_fallback(nS, last_pkS, lB,lS,lG, 1)
+    nG = smart_fallback(nG, last_pkG, lB,lS,lG, 2)
     
     next_pred = {'qh':next_qh,'b':nB,'s':nS,'g':nG,'mB':mB,'mS':mS,'mG':mG}
     last_info = {'qh':last_qh,'date':raw_data[-1][1],'b':lB,'s':lS,'g':lG}
