@@ -1,0 +1,73 @@
+name: 福彩3D每日自动更新
+
+on:
+  schedule:
+    # 北京时间 22:00 (UTC 14:00) - 第一次抓取
+    - cron: '0 14 * * *'
+    # 北京时间 23:30 (UTC 15:30) - 第二次兜底
+    - cron: '30 15 * * *'
+    # 北京时间 01:00 (UTC 17:00) - 第三次最终兜底
+    - cron: '0 17 * * *'
+  
+  # 手动触发 (调试用)
+  workflow_dispatch:
+
+# 确保同时只有一个workflow在运行
+concurrency:
+  group: fc3d-update
+  cancel-in-progress: false
+
+jobs:
+  update-and-deploy:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write      # 用于推送缓存更新
+      pages: write         # 用于部署到Pages
+      id-token: write      # 用于Pages部署认证
+    
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: 设置Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: 运行更新脚本
+        id: update
+        run: python scripts/update.py
+      
+      - name: 提交缓存更新
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # 检查是否有变更
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "无数据变更，跳过提交"
+          else
+            git add data/fc3d_cache.json update.log
+            git commit -m "📊 数据更新 [$(date +'%Y-%m-%d %H:%M') UTC]" || true
+            git push || echo "推送失败(非阻塞)"
+          fi
+      
+      - name: 配置Pages
+        uses: actions/configure-pages@v4
+      
+      - name: 上传Pages制品
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './public'
+      
+      - name: 部署到GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

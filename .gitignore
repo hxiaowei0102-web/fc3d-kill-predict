@@ -1,0 +1,6 @@
+public/
+__pycache__/
+*.pyc
+update.log
+data/fc3d_cache_bak_*.json
+.DS_Store
