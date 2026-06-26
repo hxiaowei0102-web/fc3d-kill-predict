@@ -284,6 +284,11 @@ def generate_html():
     next_pred = {'qh':next_qh,'b':nB,'s':nS,'g':nG,'mB':mB,'mS':mS,'mG':mG}
     last_info = {'qh':last_qh,'date':raw_data[-1][1],'b':lB,'s':lS,'g':lG}
     
+    # 把next/last注入所有回测对象, JS的rn()需要bt.next和bt.last
+    for bt in [bt100, bt300, bt500]:
+        bt['next'] = next_pred
+        bt['last'] = last_info
+    
     # 打印统计
     for name, bt in [("100期",bt100),("300期",bt300),("500期",bt500)]:
         s = bt['stats']
