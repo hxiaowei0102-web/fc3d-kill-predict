@@ -1,0 +1,36 @@
+{
+  "history": [
+    {
+      "qh": "2026168",
+      "date": "2026-06-27",
+      "predicted": {
+        "b": 8,
+        "s": 7,
+        "g": 7
+      },
+      "methods": {
+        "mB": "ens→sum",
+        "mS": "ens→g2+b",
+        "mG": "s>g"
+      },
+      "verified": false,
+      "actual": null,
+      "correct": null
+    }
+  ],
+  "stats": {
+    "total": 0,
+    "correct_b": 0,
+    "correct_s": 0,
+    "correct_g": 0
+  },
+  "last_kills_b": [
+    8
+  ],
+  "last_kills_s": [
+    7
+  ],
+  "last_kills_g": [
+    7
+  ]
+}

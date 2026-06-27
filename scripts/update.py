@@ -21,6 +21,7 @@ CACHE_PATH = os.path.join(PROJECT_DIR, "data", "fc3d_cache.json")
 PUBLIC_DIR = os.path.join(PROJECT_DIR, "public")
 OUTPUT_HTML = os.path.join(PUBLIC_DIR, "index.html")
 LOG_FILE = os.path.join(PROJECT_DIR, "update.log")
+PREDICTIONS_PATH = os.path.join(PROJECT_DIR, "data", "predictions.json")
 
 def log(msg):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -31,6 +32,87 @@ def log(msg):
             f.write(line + '\n')
     except:
         pass
+
+# ============ 自主学习验证闭环 ============
+
+def load_predictions():
+    """加载预测历史JSON"""
+    if os.path.exists(PREDICTIONS_PATH):
+        with open(PREDICTIONS_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {
+        "history": [],
+        "stats": {"total": 0, "correct_b": 0, "correct_s": 0, "correct_g": 0},
+        "last_kills_b": [], "last_kills_s": [], "last_kills_g": []
+    }
+
+
+def verify_predictions(pred_data, cache):
+    """对比缓存数据, 验证历史预测是否正确"""
+    cache_map = {item[0]: item[2] for item in cache}  # qh -> [b,s,g]
+    verified_any = False
+    
+    for entry in pred_data["history"]:
+        if entry.get("verified"):
+            continue
+        qh = entry["qh"]
+        if qh in cache_map:
+            actual = cache_map[qh]
+            pred = entry["predicted"]
+            ok_b = pred["b"] != actual[0]
+            ok_s = pred["s"] != actual[1]
+            ok_g = pred["g"] != actual[2]
+            
+            entry["actual"] = {"b": actual[0], "s": actual[1], "g": actual[2]}
+            entry["correct"] = {"b": ok_b, "s": ok_s, "g": ok_g}
+            entry["verified"] = True
+            
+            pred_data["stats"]["total"] += 1
+            if ok_b: pred_data["stats"]["correct_b"] += 1
+            if ok_s: pred_data["stats"]["correct_s"] += 1
+            if ok_g: pred_data["stats"]["correct_g"] += 1
+            
+            log(f"  [验证] {qh}: 预测杀({pred['b']},{pred['s']},{pred['g']}) vs 实开({actual[0]},{actual[1]},{actual[2]}) → "
+                f"{'✓' if ok_b else '✗'}|{'✓' if ok_s else '✗'}|{'✓' if ok_g else '✗'}")
+            verified_any = True
+    
+    return verified_any
+
+
+def diversity_check(kill_num, pos, pred_data, max_repeat=2):
+    """多样反偏: 同一位置杀码连续出现超过max_repeat次则换备用值"""
+    if pos == 0:
+        recent = pred_data["last_kills_b"]
+    elif pos == 1:
+        recent = pred_data["last_kills_s"]
+    else:
+        recent = pred_data["last_kills_g"]
+    
+    # 检查最近N次中同一杀码出现次数
+    if len(recent) >= max_repeat:
+        last_n = recent[-max_repeat:]
+        if all(x == kill_num for x in last_n):
+            # 连续出现太多次, 换一个
+            alt = (kill_num + 5) % 10  # +5确保完全不同
+            log(f"  [反偏] {['百','十','个'][pos]}位杀{kill_num}连续{max_repeat}次, 切换为{alt}")
+            return alt
+    return kill_num
+
+
+def save_predictions(pred_data):
+    """保存预测历史"""
+    # 只保留最近60条
+    if len(pred_data["history"]) > 60:
+        pred_data["history"] = pred_data["history"][-60:]
+    
+    # 限制滑动窗口
+    for key in ["last_kills_b", "last_kills_s", "last_kills_g"]:
+        if len(pred_data[key]) > 10:
+            pred_data[key] = pred_data[key][-10:]
+    
+    os.makedirs(os.path.dirname(PREDICTIONS_PATH), exist_ok=True)
+    with open(PREDICTIONS_PATH, 'w', encoding='utf-8') as f:
+        json.dump(pred_data, f, ensure_ascii=False, indent=2)
 
 # ============ 多数据源定义 ============
 
@@ -327,7 +409,7 @@ def calc_next_qh(last_qh):
     return f"{yyyy}{seq:03d}"
 
 
-def generate_html():
+def generate_html(pred_data=None):
     with open(CACHE_PATH, 'r', encoding='utf-8') as f:
         raw_data = json.load(f)
     
@@ -336,6 +418,13 @@ def generate_html():
     
     last_qh = raw_data[-1][0]
     next_qh = calc_next_qh(last_qh)
+    
+    # ---- 自主学习: 验证历史预测 ----
+    if pred_data is None:
+        pred_data = load_predictions()
+    
+    verify_predictions(pred_data, raw_data)
+    vstats = pred_data["stats"]  # 实盘统计
     
     # ---- 回测计算 ----
     def run_backtest(n_periods):
@@ -399,6 +488,24 @@ def generate_html():
     nS = smart_fallback(nS, last_pkS, lB,lS,lG, 1)
     nG = smart_fallback(nG, last_pkG, lB,lS,lG, 2)
     
+    # 多样反偏检查
+    nB = diversity_check(nB, 0, pred_data)
+    nS = diversity_check(nS, 1, pred_data)
+    nG = diversity_check(nG, 2, pred_data)
+    
+    # 记录本期预测 (去重: 同一期号只保留最新)
+    existing = [e for e in pred_data["history"] if e["qh"] != next_qh]
+    existing.append({
+        "qh": next_qh, "date": datetime.now().strftime("%Y-%m-%d"),
+        "predicted": {"b": nB, "s": nS, "g": nG},
+        "methods": {"mB": mB, "mS": mS, "mG": mG},
+        "verified": False, "actual": None, "correct": None
+    })
+    pred_data["history"] = existing
+    pred_data["last_kills_b"].append(nB)
+    pred_data["last_kills_s"].append(nS)
+    pred_data["last_kills_g"].append(nG)
+    
     next_pred = {'qh':next_qh,'b':nB,'s':nS,'g':nG,'mB':mB,'mS':mS,'mG':mG}
     last_info = {'qh':last_qh,'date':raw_data[-1][1],'b':lB,'s':lS,'g':lG}
     
@@ -421,6 +528,10 @@ def generate_html():
     bt100j = json.dumps(bt100, ensure_ascii=False)
     bt300j = json.dumps(bt300, ensure_ascii=False)
     bt500j = json.dumps(bt500, ensure_ascii=False)
+    vstatsj = json.dumps(vstats, ensure_ascii=False)
+    # 最近5条已验证的预测
+    vhist = [e for e in pred_data["history"] if e.get("verified")]
+    vhistj = json.dumps(vhist[-5:], ensure_ascii=False)
     
     update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
@@ -529,6 +640,7 @@ tr:active{{background:#f5f5f5}}
             <div class="pred-grid" id="nextPred"></div>
             <div class="last-info" id="lastInfo"></div>
         </div>
+        <div class="summary-cards" id="verifyCards" style="margin-bottom:6px;display:none"></div>
         <div class="summary-cards" id="cards"></div>
         <div class="controls">
             <span style="font-weight:600;color:#555;font-size:12px">回测:</span>
@@ -556,11 +668,26 @@ tr:active{{background:#f5f5f5}}
 <script>
 var D={data_json};
 var BT={{100:{bt100j},300:{bt300j},500:{bt500j}}};
+var VSTATS={vstatsj};
+var VHIST={vhistj};
 var cv=100;
 function fp(v){{return(v*100).toFixed(2)+'%'}}
 function ac(v){{return v>=0.99?'acc-perfect':v>=0.96?'acc-good':'acc-warn'}}
 function pf(v){{return v>=0.999?' perfect':''}}
 function cf(v){{return v>=0.999?' combined':''}}
+function rv(){{
+function rv(){{
+    var s=VSTATS;
+    if(!s||s.total<1){{document.getElementById('verifyCards').style.display='none';return}}
+    document.getElementById('verifyCards').style.display='grid';
+    var ab=s.correct_b/s.total, as=s.correct_s/s.total, ag=s.correct_g/s.total;
+    var aa=(s.correct_b+s.correct_s+s.correct_g)/(3*s.total);
+    document.getElementById('verifyCards').innerHTML=
+    '<div class="card"><div class="label">实盘百位</div><div class="value '+ac(ab)+'">'+fp(ab)+'</div><div class="sub">'+s.correct_b+'/'+s.total+'</div></div>'+
+    '<div class="card"><div class="label">实盘十位</div><div class="value '+ac(as)+'">'+fp(as)+'</div><div class="sub">'+s.correct_s+'/'+s.total+'</div></div>'+
+    '<div class="card"><div class="label">实盘个位</div><div class="value '+ac(ag)+'">'+fp(ag)+'</div><div class="sub">'+s.correct_g+'/'+s.total+'</div></div>'+
+    '<div class="card"><div class="label">实盘综合</div><div class="value '+ac(aa)+'">'+fp(aa)+'</div><div class="sub">'+(s.correct_b+s.correct_s+s.correct_g)+'/'+(3*s.total)+'</div></div>';
+}}
 function rs(st){{
     document.getElementById('cards').innerHTML=
     '<div class="card'+pf(st.aB)+'"><div class="label">百位</div><div class="value '+ac(st.aB)+'">'+fp(st.aB)+'</div><div class="sub">'+st.tb+'/'+st.n+'</div></div>'+
@@ -601,13 +728,14 @@ function ta(){{document.getElementById('algoNote').classList.toggle('show')}}
 (function(){{
     document.getElementById('loading').style.display='none';
     document.getElementById('main').style.display='block';
+    rv();
     sv(100);
 }})();
 </script>
 </body>
 </html>'''
     
-    return html, bt100, bt300, bt500, next_pred
+    return html, bt100, bt300, bt500, next_pred, pred_data
 
 
 def main():
@@ -625,10 +753,14 @@ def main():
     # 3. 生成HTML
     log("Step3: 生成HTML...")
     os.makedirs(PUBLIC_DIR, exist_ok=True)
-    html, bt100, bt300, bt500, next_pred = generate_html()
+    html, bt100, bt300, bt500, next_pred, pred_data = generate_html()
     
     with open(OUTPUT_HTML, 'w', encoding='utf-8') as f:
         f.write(html)
+    
+    # 保存预测历史 (自主学习闭环)
+    save_predictions(pred_data)
+    log(f"预测历史已保存: {len(pred_data['history'])}条, 已验证{pred_data['stats']['total']}条")
     
     size_kb = os.path.getsize(OUTPUT_HTML) / 1024
     log(f"HTML生成完毕: {size_kb:.0f}KB → {OUTPUT_HTML}")

@@ -1,6 +1,14 @@
 name: 福彩3D每日自动更新
 
 on:
+  # 代码推送即触发 (改算法/修bug立即可上线)
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/**'
+      - 'data/fc3d_cache.json'
+  
   schedule:
     # 北京时间 22:00 (UTC 14:00) - 第一次抓取
     - cron: '0 14 * * *'
@@ -55,7 +63,7 @@ jobs:
           if git diff --quiet && git diff --cached --quiet; then
             echo "无数据变更，跳过提交"
           else
-            git add data/fc3d_cache.json update.log
+            git add data/fc3d_cache.json data/predictions.json update.log
             git commit -m "📊 数据更新 [$(date +'%Y-%m-%d %H:%M') UTC]" || true
             git push || echo "推送失败(非阻塞)"
           fi
