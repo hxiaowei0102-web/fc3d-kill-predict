@@ -395,6 +395,80 @@ def update_cache(new_data):
     return added, cache
 
 
+def _dedup_kills(nB, nS, nG, mB, mS, mG, lB, lS, lG, last_pkB, last_pkS, last_pkG):
+    """反对子: 当两个位置杀码相同时, 切换信心最低的那个"""
+    kills = [nB, nS, nG]
+    methods = [mB, mS, mG]
+    prevs = [last_pkB, last_pkS, last_pkG]
+    
+    # 检查是否有对子
+    if kills[0] == kills[1] == kills[2]:
+        # 三个全相同 → 改默认分支的那个
+        pass  # 三同极少见, 暂保持
+    elif kills[0] == kills[1]:
+        # 百十同 → 改信心低的
+        return _swap_weaker(0, 1, kills, methods, prevs, lB, lS, lG)
+    elif kills[0] == kills[2]:
+        # 百个同
+        return _swap_weaker(0, 2, kills, methods, prevs, lB, lS, lG)
+    elif kills[1] == kills[2]:
+        # 十个同
+        return _swap_weaker(1, 2, kills, methods, prevs, lB, lS, lG)
+    
+    return nB, nS, nG, mB, mS, mG
+
+
+def _swap_weaker(a, b, kills, methods, prevs, lB, lS, lG):
+    """在两个相同杀码的位置中, 选信心低的切换"""
+    # 信心评分: 条件分支 > 集成投票(有两票) > 集成投票(tie)
+    def confidence(method):
+        if 'ens→' in method:
+            if 'tie' in method:
+                return 0  # 平局最低
+            return 1  # 两票一致
+        return 2  # 条件分支最高
+    
+    conf_a = confidence(methods[a])
+    conf_b = confidence(methods[b])
+    
+    # 选信心低的那个切换
+    swap_pos = a if conf_a <= conf_b else b
+    
+    # 生成备选值: 不等于其他两个位置, 且不等于上期同位置
+    t = lB + lS + lG
+    forbidden = {kills[(swap_pos + 1) % 3], kills[(swap_pos + 2) % 3]}
+    if prevs[swap_pos] is not None:
+        forbidden.add(prevs[swap_pos])
+    
+    # 按优先级尝试备选
+    if swap_pos == 0:
+        alts = [(t+6)%10, (t+3)%10, (t+8)%10, (lB+lG)%10, (lB*lS+lS*lG)%10,
+                (t+2)%10, (t+7)%10, (t+1)%10, (lB*lS)%10, (lB+lG-lS)%10]
+    elif swap_pos == 1:
+        alts = [(t+5)%10, (t+3)%10, (lB+lS)%10, (lB*lG)%10, (t+7)%10,
+                (lS*lG)%10, (t+1)%10, (lG*lG+lB)%10, (t+4)%10, (t+6)%10]
+    else:
+        alts = [(t+8)%10, (t+3)%10, (t+6)%10, (lB+lG)%10, (lB*lS+lS*lG)%10,
+                (t+2)%10, (t+7)%10, (t+1)%10, (lS*lG)%10, lB]
+    
+    for alt in alts:
+        alt = alt % 10
+        if alt not in forbidden:
+            kills[swap_pos] = alt
+            methods[swap_pos] += '→dedup'
+            log(f"  [反对子] {'百十个'[swap_pos]}位杀{kills[a]}→{alt} (原重复, 信心{conf_a}vs{conf_b})")
+            break
+    else:
+        # 所有备选都被禁 → 暴力找一个不同的
+        for alt in range(10):
+            if alt not in forbidden:
+                kills[swap_pos] = alt
+                methods[swap_pos] += '→dedup'
+                break
+    
+    return kills[0], kills[1], kills[2], methods[0], methods[1], methods[2]
+
+
 # ============ v8 算法 (与generate_fc3d_kill_v8.py一致) ============
 
 def kill_bai(b, s, g):
@@ -546,6 +620,9 @@ def generate_html(pred_data=None):
     nB = diversity_check(nB, 0, pred_data)
     nS = diversity_check(nS, 1, pred_data)
     nG = diversity_check(nG, 2, pred_data)
+    
+    # 反对子: 当两个位置杀码相同时, 切换信心较低的那个
+    nB, nS, nG, mB, mS, mG = _dedup_kills(nB, nS, nG, mB, mS, mG, lB, lS, lG, last_pkB, last_pkS, last_pkG)
     
     # 记录本期预测 (去重: 同一期号只保留最新)
     existing = [e for e in pred_data["history"] if e["qh"] != next_qh]
