@@ -14,6 +14,13 @@ import urllib.request
 import urllib.error
 from datetime import datetime
 
+# 优先使用requests (更稳定的HTTP库)
+try:
+    import requests
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
+
 # ============ 路径配置 ============
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
@@ -65,6 +72,8 @@ def verify_predictions(pred_data, cache):
             
             entry["actual"] = {"b": actual[0], "s": actual[1], "g": actual[2]}
             entry["correct"] = {"b": ok_b, "s": ok_s, "g": ok_g}
+            entry["is_hit"] = ok_b or ok_s or ok_g  # 至少一个位置正确=命中
+            entry["n_hits"] = (1 if ok_b else 0) + (1 if ok_s else 0) + (1 if ok_g else 0)
             entry["verified"] = True
             
             pred_data["stats"]["total"] += 1
@@ -79,8 +88,8 @@ def verify_predictions(pred_data, cache):
     return verified_any
 
 
-def diversity_check(kill_num, pos, pred_data, max_repeat=2):
-    """多样反偏: 同一位置杀码连续出现超过max_repeat次则换备用值"""
+def diversity_check(kill_num, pos, pred_data, max_repeat=12):
+    """多样反偏: 同一位置杀码在最近12期内出现超过一半则换备用值"""
     if pos == 0:
         recent = pred_data["last_kills_b"]
     elif pos == 1:
@@ -114,7 +123,63 @@ def save_predictions(pred_data):
     with open(PREDICTIONS_PATH, 'w', encoding='utf-8') as f:
         json.dump(pred_data, f, ensure_ascii=False, indent=2)
 
-# ============ 多数据源定义 ============
+# ============ 多数据源定义 (6重) ============
+
+def source_cwl():
+    """数据源1: cwl.gov.cn — 中国福利彩票官网, 最稳定JSON API"""
+    if not HAS_REQUESTS:
+        return []
+    results = []
+    try:
+        url = "https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice?name=3d&issueCount=50"
+        r = requests.get(url, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://www.cwl.gov.cn/',
+        }, timeout=12)
+        if r.status_code == 200:
+            data = r.json()
+            if data.get('state') == 0:
+                for item in data.get('result', []):
+                    code = item.get('code', '')
+                    red = item.get('red', '')
+                    dt = item.get('date', '')
+                    if item.get('name') != '3D' or not red:
+                        continue
+                    digits = [int(c) for c in red.split(',')]
+                    if len(digits) != 3:
+                        continue
+                    if '(' in dt:
+                        dt = dt[:dt.index('(')]
+                    results.append([code, dt, digits])
+        if results:
+            log(f"  [cwl] {len(results)}条")
+    except Exception as e:
+        log(f"  [cwl] 失败: {type(e).__name__}")
+    return results
+
+
+def source_cjcp():
+    """数据源2: cjcp.cn — 彩经网HTML抓取, GBK编码, 多期数据"""
+    import re as _re
+    results = []
+    try:
+        url = 'https://www.cjcp.cn/3dkaijiang/'
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
+        with urllib.request.urlopen(req, timeout=15) as r:
+            raw = r.read()
+            text = raw.decode('gbk', errors='replace')
+            pattern = r'福彩3D第(\d{7})期开奖结果</div>\s*<div class="date">(\d{4}-\d{2}-\d{2})[^<]*</div>.*?num-ball[^>]*>(\d)<.*?num-ball[^>]*>(\d)<.*?num-ball[^>]*>(\d)<'
+            matches = _re.findall(pattern, text, _re.DOTALL)
+            for issue, date_str, d1, d2, d3 in matches[:50]:
+                results.append([issue, date_str, [int(d1), int(d2), int(d3)]])
+        if results:
+            log(f"  [cjcp] {len(results)}条")
+    except Exception as e:
+        log(f"  [cjcp] 失败: {type(e).__name__}")
+    return results
+
 
 def source_huiniao():
     """数据源1: api.huiniao.top (免费, 无需key, 支持分页)"""
@@ -267,10 +332,11 @@ def source_fallback():
 def fetch_latest_data():
     """依次尝试多个数据源, 返回新增的期号数据"""
     sources = [
+        ("cwl", source_cwl),
+        ("cjcp", source_cjcp),
         ("huiniao", source_huiniao),
-        ("apihz", source_apihz),
         ("eastmoney", source_eastmoney),
-        ("lotteryapi", source_lotteryapi),
+        ("apihz", source_apihz),
         ("fallback", source_fallback),
     ]
     
@@ -487,7 +553,8 @@ def generate_html(pred_data=None):
         "qh": next_qh, "date": datetime.now().strftime("%Y-%m-%d"),
         "predicted": {"b": nB, "s": nS, "g": nG},
         "methods": {"mB": mB, "mS": mS, "mG": mG},
-        "verified": False, "actual": None, "correct": None
+        "verified": False, "actual": None, "correct": None,
+        "is_hit": None, "n_hits": None
     })
     pred_data["history"] = existing
     pred_data["last_kills_b"].append(nB)
