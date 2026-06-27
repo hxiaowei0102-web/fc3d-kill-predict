@@ -676,7 +676,6 @@ function ac(v){{return v>=0.99?'acc-perfect':v>=0.96?'acc-good':'acc-warn'}}
 function pf(v){{return v>=0.999?' perfect':''}}
 function cf(v){{return v>=0.999?' combined':''}}
 function rv(){{
-function rv(){{
     var s=VSTATS;
     if(!s||s.total<1){{document.getElementById('verifyCards').style.display='none';return}}
     document.getElementById('verifyCards').style.display='grid';
