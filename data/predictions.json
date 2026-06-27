@@ -5,12 +5,12 @@
       "date": "2026-06-27",
       "predicted": {
         "b": 8,
-        "s": 7,
+        "s": 5,
         "g": 7
       },
       "methods": {
         "mB": "ens→sum",
-        "mS": "ens→g2+b",
+        "mS": "ens→g2+b→dedup",
         "mG": "s>g"
       },
       "verified": false,
@@ -31,6 +31,7 @@
     8,
     3,
     8,
+    8,
     8
   ],
   "last_kills_s": [
@@ -38,12 +39,14 @@
     7,
     2,
     7,
-    7
+    7,
+    5
   ],
   "last_kills_g": [
     7,
     7,
     2,
+    7,
     7,
     7
   ]
