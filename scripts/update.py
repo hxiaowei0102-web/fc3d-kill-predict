@@ -144,37 +144,34 @@ def source_huiniao():
 
 
 def source_apihz():
-    """数据源2: apihz.cn (免费JSON API, 共享key, 查询最新一期)"""
+    """数据源2: apihz.cn (免费JSON API, 共享key, 多IP节点)"""
     results = []
-    # 多IP节点轮换, 提高可用性
     nodes = [
         "https://cn.apihz.cn/api/caipiao/fucai3d.php",
-        "http://124.222.204.22/api/caipiao/fucai3d.php",
-        "http://43.142.65.209/api/caipiao/fucai3d.php",
-        "http://124.222.2.141/api/caipiao/fucai3d.php",
+        "https://www.apihz.cn/api/caipiao/fucai3d.php",
+        "http://47.96.18.209/api/caipiao/fucai3d.php",
     ]
     for node in nodes:
         try:
             url = f"{node}?id=88888888&key=88888888"
             req = urllib.request.Request(url, headers={
-                'User-Agent': 'Mozilla/5.0 (compatible; FC3D-Bot/2.0)'
+                'User-Agent': 'Mozilla/5.0 (compatible; FC3D-Bot/3.0)'
             })
-            with urllib.request.urlopen(req, timeout=12) as resp:
+            with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
             if data.get('code') == 200:
                 number = data['number'].split('|')
-                qh = data['qihao']
-                day = data['time'].split('(')[0]
-                results.append([qh, day, [int(number[0]), int(number[1]), int(number[2])]])
-                log(f"  [apihz] {node.split('/')[2]}: 1条")
+                results.append([data['qihao'], data['time'].split('(')[0],
+                              [int(number[0]), int(number[1]), int(number[2])]])
+                log(f"  [apihz] 1条 → 期{data['qihao']} {data['number']}")
                 break
-        except Exception as e:
+        except:
             continue
     return results
 
 
 def source_eastmoney():
-    """数据源3: 东方财富网 (HTML抓取, 大型金融平台最稳定, 无需key)"""
+    """数据源3: 东方财富网 (HTML表格抓取, 平台最稳, 3页≈150条)"""
     import re as _re
     results = []
     try:
@@ -182,59 +179,47 @@ def source_eastmoney():
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Referer': 'https://caipiao.eastmoney.com/',
         }
-        # 抓取前3页 (每页约50期)
         for page in [1, 2, 3]:
-            url = 'https://caipiao.eastmoney.com/Result/History/fc3d'
-            if page > 1:
-                url += f'?page={page}'
             try:
+                url = 'https://caipiao.eastmoney.com/Result/History/fc3d'
+                if page > 1:
+                    url += f'?page={page}'
                 req = urllib.request.Request(url, headers=headers)
-                with urllib.request.urlopen(req, timeout=15) as resp:
+                with urllib.request.urlopen(req, timeout=12) as resp:
                     html = resp.read().decode('utf-8', errors='ignore')
                 
-                # 找到历史数据表格
                 table_m = _re.search(r'<table[^>]*class="[^"]*table-history[^"]*"[^>]*>(.*?)</table>', html, _re.DOTALL)
                 if not table_m:
                     break
                 
                 rows = _re.findall(r'<tr[^>]*>(.*?)</tr>', table_m.group(1), _re.DOTALL)
-                page_count = 0
+                got = 0
                 for row in rows:
                     tds = _re.findall(r'<td[^>]*>(.*?)</td>', row, _re.DOTALL)
                     tds = [_re.sub(r'<[^>]+>', '', t).strip() for t in tds]
-                    tds = [t for t in tds if t]  # 去掉空td
-                    
+                    tds = [t for t in tds if t]
                     if len(tds) < 4:
                         continue
-                    qh = tds[0]
-                    day_raw = tds[1]
-                    num_raw = tds[3]  # 号码在第4列
-                    
-                    # 清理期号: 必须是7位数字
+                    qh, day_raw, num_raw = tds[0], tds[1], tds[3]
                     if not _re.fullmatch(r'\d{7}', qh):
                         continue
-                    
-                    # 清理号码: 去除换行和空格, 得到3位数字
                     num_clean = _re.sub(r'\s+', '', num_raw)
                     if not _re.fullmatch(r'\d{3}', num_clean):
                         continue
-                    
-                    # 清理日期: 取日期部分
                     day_match = _re.search(r'(\d{4}-\d{2}-\d{2})', day_raw)
                     if not day_match:
                         continue
-                    day = day_match.group(1)
-                    
-                    results.append([qh, day, [int(num_clean[0]), int(num_clean[1]), int(num_clean[2])]])
-                    page_count += 1
-                
-                if page_count == 0:
+                    results.append([qh, day_match.group(1),
+                                  [int(num_clean[0]), int(num_clean[1]), int(num_clean[2])]])
+                    got += 1
+                if got == 0 and page == 1:
+                    raise Exception("无数据行")
+                if got == 0:
                     break
             except Exception as e:
                 if page == 1:
-                    raise  # 第一页失败则整体失败
-                break  # 后续页失败则停止翻页
-        
+                    raise
+                break
         log(f"  [eastmoney] {len(results)}条")
     except Exception as e:
         log(f"  [eastmoney] 失败: {e}")
@@ -242,30 +227,33 @@ def source_eastmoney():
 
 
 def source_lotteryapi():
-    """数据源4: 备用JSON API (多个免费端点)"""
+    """数据源4: 备用JSON API (多个免费端点轮询, jisuapi+aliyun+)"""
     results = []
     endpoints = [
-        # 多个免费端点,逐个尝试
-        ("https://api.jisuapi.com/caipiao/history?appkey=免费key&caipiaoid=9&issueno=&start=0&num=30", "jisuapi"),
+        ("https://api.jisuapi.com/caipiao/history?appkey=200a50a6e0795186&caipiaoid=9&start=0&num=30", "jisuapi"),
+        ("https://api.jisuapi.com/caipiao/history?appkey=b153c353479eaa88&caipiaoid=9&start=0&num=30", "jisuapi2"),
     ]
     for url, name in endpoints:
         try:
             req = urllib.request.Request(url, headers={
-                'User-Agent': 'Mozilla/5.0 (compatible; FC3D-Bot/2.0)'
+                'User-Agent': 'Mozilla/5.0 (compatible; FC3D-Bot/3.0)'
             })
-            with urllib.request.urlopen(req, timeout=12) as resp:
+            with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
             if data.get('status') != '0':
                 continue
             items = data.get('result', {}).get('list', [])
             for item in items:
-                results.append([item['issueno'], item['date'], 
-                              [int(item['number'][0]), int(item['number'][1]), int(item['number'][2])]])
-            log(f"  [{name}] {len(items)}条")
+                n = item.get('number', '')
+                if not n or len(n) < 3:
+                    continue
+                results.append([item['issueno'], item['date'],
+                              [int(n[0]), int(n[1]), int(n[2])]])
+            log(f"  [{name}] {len(results)}条")
             if results:
                 break
-        except Exception as e:
-            log(f"  [{name}] 失败: {type(e).__name__}")
+        except:
+            continue
     return results
 
 
