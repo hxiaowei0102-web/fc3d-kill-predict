@@ -50,6 +50,9 @@ jobs:
         with:
           python-version: '3.12'
       
+      - name: 安装依赖
+        run: pip install requests
+      
       - name: 运行更新脚本
         id: update
         run: python scripts/update.py
