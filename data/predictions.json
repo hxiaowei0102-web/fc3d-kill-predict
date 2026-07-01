@@ -121,6 +121,33 @@
         "mS": "ens→g2+b",
         "mG": "ens→sum"
       },
+      "verified": true,
+      "actual": {
+        "b": 4,
+        "s": 4,
+        "g": 5
+      },
+      "correct": {
+        "b": true,
+        "s": true,
+        "g": true
+      },
+      "is_hit": true,
+      "n_hits": 3
+    },
+    {
+      "qh": "2026173",
+      "date": "2026-07-01",
+      "predicted": {
+        "b": 6,
+        "s": 7,
+        "g": 9
+      },
+      "methods": {
+        "mB": "b==s",
+        "mS": "sum_odd",
+        "mG": "ens→sum"
+      },
       "verified": false,
       "actual": null,
       "correct": null,
@@ -129,13 +156,12 @@
     }
   ],
   "stats": {
-    "total": 4,
-    "correct_b": 4,
-    "correct_s": 4,
-    "correct_g": 3
+    "total": 5,
+    "correct_b": 5,
+    "correct_s": 5,
+    "correct_g": 4
   },
   "last_kills_b": [
-    7,
     4,
     4,
     4,
@@ -144,28 +170,29 @@
     6,
     1,
     1,
-    1
+    1,
+    6
   ],
   "last_kills_s": [
     5,
     5,
     5,
-    5,
     9,
     9,
     9,
+    7,
     7,
     7,
     7
   ],
   "last_kills_g": [
-    1,
     8,
     8,
     8,
     4,
     4,
     4,
+    9,
     9,
     9,
     9
